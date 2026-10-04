@@ -1,45 +1,67 @@
-# Keyline — permission-aware multi-tenant RAG
+# Keyline
 
-A small, runnable portfolio demo of a core enterprise RAG requirement: **authorize documents before retrieval**, so a user's question cannot retrieve another tenant's or role-restricted content.
+Keyline is a full-stack, permission-aware knowledge app for teams. Users create a workspace, upload text or Markdown documents, and ask questions. Retrieval applies workspace and role permissions in the database before any passages are used to form an answer.
 
 ## Run locally
 
-Requires Python 3.10 or newer. No packages or API keys are needed.
+Requires Python 3.10+.
 
 ```bash
-python app.py
+python -m venv .venv
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# macOS / Linux:
+# source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The SQLite database is created beside `app.py` and seeded with fictional Northstar and BluePeak documents on first run.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000), create a workspace, and sign in. The first account in a workspace is its admin. The database is created in `storage/keyline.sqlite3` by default.
 
-### Try the access boundaries
+## Features
 
-- As **Maya (Northstar analyst)**, ask “What changed in Q3?” She can retrieve the Northstar Q3 report.
-- As **Leo (Northstar member)**, ask the same question. The analyst-only report is not in his retrievable document set.
-- As **Ari (Northstar admin)**, ask about the incident review. The admin-only review is available.
-- As **Nina (BluePeak analyst)**, ask “What were September delivery metrics?” She can retrieve BluePeak data, never Northstar data.
+- **Real accounts:** workspace-scoped email and password login; passwords are stored as salted scrypt hashes. Sessions use random, server-side tokens in HttpOnly cookies, with CSRF tokens on state-changing requests.
+- **Tenant isolation:** users, documents, search passages, and audit events are always scoped to the authenticated workspace.
+- **Role permissions:** admins manage members and can access all workspace documents; analysts can access documents shared with analysts; members can access documents shared with everyone.
+- **Document library:** upload UTF-8 `.txt` and `.md` files up to 5 MB, split into overlapping passages, choose an access level, review the library, and delete documents as an admin.
+- **Actual retrieval:** SQLite FTS5 ranks text passages, with tenant and role filters in the retrieval query. Answers include source references.
+- **Audit history:** each question records who asked, the question, and which authorized source documents were retrieved. Admins see workspace events; other roles see their own.
+- **Optional generated answers:** configure an OpenAI-compatible Chat Completions endpoint using the environment variables below. Only already-authorized passages are sent to the provider. Without a key, Keyline returns source excerpts directly.
+- **Separate frontend and backend:** static HTML/CSS/JavaScript in `static/`, JSON API in FastAPI.
 
-## What this demonstrates
+## Optional language model
 
-- Tenant and role predicates are applied in the SQLite query **before document content enters matching**.
-- Retrieval results include source labels and citations.
-- Each query records the user, tenant, query text, timestamp, and retrieved document IDs in an audit table. The UI shows the signed-in demo user's recent events.
-- The demo identity is held in a server-side session token; the browser does not choose a tenant ID for retrieval.
+Set these environment variables before starting the app. The default endpoint is OpenAI's API; a compatible provider can be configured with `OPENAI_BASE_URL` and `OPENAI_MODEL`.
+
+```powershell
+$env:OPENAI_API_KEY = "your-key"
+$env:OPENAI_MODEL = "gpt-4o-mini"
+```
+
+Never put API keys in the repository, frontend code, screenshots, or a public issue. A generated answer is grounded in retrieved passages, but you should review model output before relying on it.
+
+## Production deployment notes
+
+This repository is a full-stack application starter, not a managed hosting setup. Run it behind HTTPS, set `COOKIE_SECURE=1`, use a persistent `DATABASE_PATH`, and keep secrets in the host's secret manager. The included SQLite database is suited to local development and a single app instance; use managed PostgreSQL and add email verification, password reset, monitoring, backups, and deployment-specific rate limiting before serving a larger or public user base.
+
+Example server command:
+
+```bash
+python -m uvicorn app:app --host 0.0.0.0 --port 8000
+```
 
 ## Architecture
 
 ```text
-Question → demo session identity → SQL tenant + role filter → keyword ranking
-        → answer assembled from authorized passages + source cards
-        → audit event (user, tenant, query, retrieved document IDs)
+Browser (static frontend)
+  ├─ Auth API → workspace, user, hashed password, session, CSRF
+  ├─ Upload API → document → overlapping passages → SQLite FTS5
+  └─ Ask API → authenticated workspace + role SQL filter → ranked passages
+                                              ├─ optional language model
+                                              └─ audit event + cited sources
 ```
 
-## Scope and production considerations
+## License
 
-This is a dependency-free **retrieval and authorization prototype**, not a full generative RAG service: it uses simple keyword matching and returns the matching source passages instead of calling an LLM or vector database. That keeps the access-control boundary easy to inspect. A next iteration could add embeddings/vector search while retaining tenant and role constraints in the retrieval query, then add an LLM that receives only the already-authorized passages.
+No license has been added yet. Choose a license before accepting outside contributions or permitting reuse.
 
-The user switcher is intentionally a local demo convenience, not authentication. Before deployment, replace it with verified identity from an authentication provider, store sessions safely, add CSRF protection and rate limits, protect audit data, and use a database and authorization model appropriate to the deployment. Do not expose this demo server to the public internet.
-
-## Stack
-
-Python standard library · SQLite · HTML/CSS/JavaScript
