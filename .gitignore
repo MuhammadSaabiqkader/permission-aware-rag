@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+rag_demo.db
+.venv/
+venv/
+.env
