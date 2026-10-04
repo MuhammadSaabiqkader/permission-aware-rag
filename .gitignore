@@ -5,4 +5,7 @@ storage/
 .venv/
 venv/
 .env
-
+.env.*
+!.env.example
+.vercel/
+*.sqlite3
