@@ -24,10 +24,11 @@ from pypdf import PdfReader
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
-DB_FILE = Path(os.getenv("DATABASE_PATH", str(ROOT / "storage" / "keyline.sqlite3")))
-DB_FILE.parent.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
 USE_POSTGRES = bool(DATABASE_URL)
+DB_FILE = Path(os.getenv("DATABASE_PATH", str(ROOT / "storage" / "keyline.sqlite3")))
+if not USE_POSTGRES:
+    DB_FILE.parent.mkdir(parents=True, exist_ok=True)
 COOKIE_SECURE = os.getenv(
     "COOKIE_SECURE", "1" if os.getenv("VERCEL") == "1" else "0"
 ).lower() in {"1", "true", "yes"}
