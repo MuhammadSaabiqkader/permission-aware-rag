@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 rag_demo.db
+storage/
 .venv/
 venv/
 .env
+
