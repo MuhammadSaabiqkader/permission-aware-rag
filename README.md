@@ -11,7 +11,7 @@ Keyline is a full-stack document question-answering app built with FastAPI. It l
 - **Workspaces and accounts:** password login, salted scrypt password hashes, server-side sessions, HttpOnly cookies, and CSRF protection for changes.
 - **Document library:** upload selectable-text PDF, UTF-8 text, or Markdown files up to 5 MB. Documents are split into overlapping passages for retrieval.
 - **Role-aware access:** `admin`, `analyst`, and `member` roles. Every document and passage is scoped to its workspace; role filters are applied in the retrieval query.
-- **Grounded answers:** source passages are returned with citations. With an OpenAI-compatible API key, Keyline can synthesize an answer from authorized passages; without one, it returns the retrieved excerpts.
+- **Grounded answers:** source passages are returned with citations. On Vercel, Keyline uses Vercel AI Gateway with Vercel's deployment identity to synthesize answers from authorized passages; without an available model, it returns source-grounded excerpts.
 - **Hybrid retrieval:** SQLite FTS5 keyword retrieval works locally without an API key. Add an embedding API key to enable vector similarity locally; PostgreSQL with pgvector provides indexed vector retrieval for deployment.
 - **Audit history:** each question records the user, query, and retrieved document IDs. Admins can review workspace activity; other roles see their own events.
 - **Sample library:** an admin can load all six included PDFs from the Library screen. The action is safe to repeat and reports documents already present.
@@ -54,17 +54,25 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). By default, local developme
 
 ### Optional AI and embeddings
 
-The app works without an AI provider: keyword search and source excerpts remain available. Configure an OpenAI-compatible service in the server environment to enable semantic embeddings and generated answers:
+On Vercel, generated answers use Vercel AI Gateway and the deployment's automatic OIDC token. The default model is `minimax/minimax-m3-free`, currently listed as free on the Gateway. The model catalog and availability can change; keep any `AI_GATEWAY_MODEL` override set to a model marked **Free** if you want to avoid token charges. If Gateway is unavailable, Keyline falls back to source-grounded excerpts.
+
+For local development, you can use an AI Gateway key or an OpenAI-compatible provider:
 
 ```powershell
+# Optional local Gateway access
+$env:AI_GATEWAY_API_KEY = "your-vercel-ai-gateway-key"
+$env:AI_GATEWAY_MODEL = "minimax/minimax-m3-free"
+
+# Or use an OpenAI-compatible provider directly
 $env:OPENAI_API_KEY = "your-key"
 $env:OPENAI_MODEL = "gpt-4o-mini"
+# Optional: embeddings enable semantic vector retrieval
 $env:OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 # Optional compatible endpoint, for example a provider exposing the OpenAI API shape:
 # $env:OPENAI_BASE_URL = "https://provider.example/v1"
 ```
 
-Embedding and answer requests send document passages and questions to the configured provider. Only passages allowed for the current user are sent for answer generation. Do not use confidential data with an external provider unless that use is approved for your organization. Keep keys on the server; never commit them or put them in frontend code.
+Only passages allowed for the current user are sent for answer generation. Embeddings use the separately configured OpenAI-compatible endpoint. Do not use confidential data with an external provider unless that use is approved for your organization. Keep keys on the server; never commit them or put them in frontend code.
 
 ## Deploy on Vercel
 
@@ -73,7 +81,7 @@ Vercel can deploy the FastAPI application from this GitHub repository. The app r
 1. Import `MuhammadSaabiqkader/permission-aware-rag` into Vercel.
 2. Connect a managed PostgreSQL provider with the `vector` extension (for example, Neon through the Vercel Marketplace). Set `DATABASE_URL` or `POSTGRES_URL` from the provider's connection string in the Vercel project environment.
 3. Redeploy. On startup, Keyline creates its schema and indexes. The app enables secure cookies automatically on Vercel.
-4. Optionally add `OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_EMBEDDING_MODEL` as server-side environment variables for generated answers and hybrid semantic retrieval.
+4. Vercel AI Gateway answer generation uses the automatic `VERCEL_OIDC_TOKEN`; no provider key needs to be committed or manually added. Optionally add an OpenAI-compatible `OPENAI_API_KEY` and `OPENAI_EMBEDDING_MODEL` as server-side variables to enable semantic embeddings.
 5. Create a workspace on the live site and load the sample PDFs from the Library page.
 
 Vercel's [FastAPI guide](https://vercel.com/docs/frameworks/backend/fastapi) describes the Python deployment behavior. The repository intentionally excludes databases, virtual environments, and secrets. Never commit a live database URL or provider key.
@@ -104,3 +112,4 @@ flowchart LR
 - PDF text extraction requires selectable text; scanned PDFs need OCR.
 - The project is a portfolio implementation, not a security certification. Before using it for real company data, add production account recovery and verification, stronger persistent rate limiting, operational monitoring, backup/restore procedures, and a security review.
 - The six bundled PDFs are illustrative synthetic material, not real company records.
+
