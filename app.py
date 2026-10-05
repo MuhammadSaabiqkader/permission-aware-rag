@@ -66,7 +66,8 @@ class PostgresConnection:
         return self.raw.execute(statement.replace("?", "%s"), params)
 
     def executemany(self, statement, params):
-        return self.raw.executemany(statement.replace("?", "%s"), params)
+        with self.raw.cursor() as cursor:
+            return cursor.executemany(statement.replace("?", "%s"), params)
 
 
 def connect():
