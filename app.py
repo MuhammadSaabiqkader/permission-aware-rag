@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import math
+import mimetypes
 from io import BytesIO
 import json
 import os
@@ -16,9 +17,10 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 
@@ -117,9 +119,10 @@ def initialize() -> None:
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
                     owner_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL,
                     title TEXT NOT NULL, allowed_roles TEXT NOT NULL,
-                    bytes BIGINT NOT NULL, created_at TEXT NOT NULL
+                    bytes BIGINT NOT NULL, created_at TEXT NOT NULL, file_data BYTEA
                 )
             """)
+            db.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS chunks (
                     id BIGSERIAL PRIMARY KEY,
@@ -168,7 +171,7 @@ def initialize() -> None:
                 id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
                 owner_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL,
                 title TEXT NOT NULL, allowed_roles TEXT NOT NULL,
-                bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+                bytes INTEGER NOT NULL, created_at TEXT NOT NULL, file_data BLOB
             );
             CREATE TABLE IF NOT EXISTS chunks (
                 id INTEGER PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -197,6 +200,9 @@ def initialize() -> None:
             CREATE INDEX IF NOT EXISTS docs_workspace_idx ON documents(workspace_id);
             CREATE INDEX IF NOT EXISTS audit_workspace_idx ON audit_log(workspace_id,id DESC);
         """)
+        document_columns = {row["name"] for row in db.execute("PRAGMA table_info(documents)")}
+        if "file_data" not in document_columns:
+            db.execute("ALTER TABLE documents ADD COLUMN file_data BLOB")
         chunk_columns = {row["name"] for row in db.execute("PRAGMA table_info(chunks)")}
         if "embedding_json" not in chunk_columns:
             db.execute("ALTER TABLE chunks ADD COLUMN embedding_json TEXT")
@@ -676,8 +682,8 @@ async def upload_document(file: UploadFile = File(...), access: str = Form("ever
     filename = Path(file.filename).name[:180]
     title = Path(filename).stem[:180]
     with connect() as db:
-        db.execute("INSERT INTO documents(id,workspace_id,owner_id,filename,title,allowed_roles,bytes,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                   (document_id, user["workspace_id"], user["id"], filename, title, roles, len(content), now_iso()))
+        db.execute("INSERT INTO documents(id,workspace_id,owner_id,filename,title,allowed_roles,bytes,created_at,file_data) VALUES(?,?,?,?,?,?,?,?,?)",
+                   (document_id, user["workspace_id"], user["id"], filename, title, roles, len(content), now_iso(), content))
         semantic_indexed = store_chunks(
             db, document_id, user["workspace_id"], roles, title, filename, chunks, embeddings
         )
@@ -721,9 +727,9 @@ def import_sample_documents(user: dict = Depends(authenticated_user)):
             document_id = secrets.token_hex(16)
             title = Path(filename).stem
             db.execute(
-                "INSERT INTO documents(id,workspace_id,owner_id,filename,title,allowed_roles,bytes,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO documents(id,workspace_id,owner_id,filename,title,allowed_roles,bytes,created_at,file_data) VALUES(?,?,?,?,?,?,?,?,?)",
                 (document_id, user["workspace_id"], user["id"], filename, title, roles,
-                 len(sample["content"]), now_iso()),
+                 len(sample["content"]), now_iso(), sample["content"]),
             )
             semantic_indexed = store_chunks(
                 db, document_id, user["workspace_id"], roles, title, filename, chunks, sample["embeddings"]
@@ -731,6 +737,40 @@ def import_sample_documents(user: dict = Depends(authenticated_user)):
             imported.append({"filename": filename, "chunks": len(chunks),
                              "access": sample["access"], "semantic_indexed": semantic_indexed})
     return {"ok": True, "imported": imported, "skipped": skipped}
+
+
+@app.get("/api/documents/{document_id}/file")
+def open_document_file(document_id: str, user: dict = Depends(current_user)):
+    access = can_read_sql("d")
+    with connect() as db:
+        row = db.execute(f"""
+            SELECT d.filename,d.file_data,d.bytes
+            FROM documents d
+            WHERE d.id=? AND d.workspace_id=? AND {access}
+        """, (document_id, user["workspace_id"], user["role"])).fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found in this workspace.")
+
+    filename = row["filename"]
+    content = row["file_data"]
+    if content is None:
+        # Existing sample documents predate file storage; use only the bundled original.
+        sample_path = ROOT / "sample-documents" / filename
+        if filename not in SAMPLE_DOCUMENT_ACCESS or not sample_path.is_file():
+            raise HTTPException(404, "Original file unavailable. Remove and upload this document again.")
+        content = sample_path.read_bytes()
+        if len(content) != row["bytes"]:
+            raise HTTPException(404, "Original file unavailable. Remove and upload this document again.")
+
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return Response(
+        content=bytes(content),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @app.delete("/api/documents/{document_id}")
