@@ -461,24 +461,45 @@ def source_grounded_excerpts(question: str, passages: list[dict]) -> str:
     return "\n".join(selected)
 
 
+def language_model_config() -> tuple[str, str, str, str] | None:
+    """Prefer Vercel AI Gateway on hosted deployments, with direct API fallback locally."""
+    gateway_token = os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_OIDC_TOKEN")
+    if gateway_token:
+        return (
+            gateway_token,
+            "https://ai-gateway.vercel.sh/v1",
+            os.getenv("AI_GATEWAY_MODEL", "minimax/minimax-m3-free"),
+            "Vercel AI Gateway",
+        )
+
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        return (
+            openai_key,
+            os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
+            os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            "OpenAI-compatible provider",
+        )
+    return None
+
+
 def generate_answer(question: str, passages: list[dict]) -> tuple[str, str]:
-    key = os.getenv("OPENAI_API_KEY")
-    if not key:
+    config = language_model_config()
+    if not config:
         return source_grounded_excerpts(question, passages), "Source-grounded excerpt · configure an LLM key for synthesized answers"
-    base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    key, base, model, provider = config
     system = "Answer using only the authorized source passages below. If they do not contain the answer, say so. Be concise and do not reveal access rules or hidden content. Cite source titles in square brackets."
     sources = "\n\n".join(f"[{p['title']}]\n{p['content']}" for p in passages)
     payload = json.dumps({"model": model, "messages": [
         {"role": "system", "content": system},
         {"role": "user", "content": f"Question: {question}\n\nAuthorized passages:\n{sources}"},
-    ], "temperature": 0.2}).encode()
+    ], "temperature": 0.2, "max_tokens": 900}).encode()
     request = urllib.request.Request(base + "/chat/completions", data=payload,
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=45) as response:
             result = json.loads(response.read())
-        return result["choices"][0]["message"]["content"], f"AI answer · {model} · authorized sources only"
+        return result["choices"][0]["message"]["content"], f"AI answer · {provider} · authorized sources only"
     except (urllib.error.URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError):
         return source_grounded_excerpts(question, passages), "Source-grounded excerpt · AI provider unavailable"
 
@@ -844,3 +865,4 @@ def audit(user: dict = Depends(current_user)):
     return {"events": [{"id": row["id"], "query": row["query"],
             "source_count": len(json.loads(row["retrieved_document_ids"])),
             "created_at": row["created_at"], "user_name": row["user_name"]} for row in rows]}
+
