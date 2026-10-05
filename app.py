@@ -389,6 +389,53 @@ def fts_query(query: str, operator: str = "AND") -> str:
 def source_grounded_excerpts(question: str, passages: list[dict]) -> str:
     terms = {token.casefold() for token in re.findall(r"[\w]+", question, flags=re.UNICODE)
              if token.casefold() not in QUERY_STOPWORDS}
+    terms.update(token[:-1] for token in tuple(terms) if len(token) > 4 and token.endswith("s"))
+    if "step" in terms or "steps" in terms:
+        terms.update({"checklist", "process", "training", "weeks"})
+
+    heading = re.compile(r"^(?:\d{1,2}\.\s+[A-Z]|Risk\s+R-\d{3}\b)", re.IGNORECASE)
+    sections = []
+    for passage in passages:
+        parts = re.split(r"\s*•\s*|(?=\b\d{1,2}\.\s+[A-Z])|(?=Risk\s+R-\d{3}\b)",
+                         passage["content"])
+        current = []
+        for part in parts:
+            item = part.strip(" \t\n•")
+            if not item:
+                continue
+            if heading.match(item):
+                if current:
+                    sections.append(current)
+                current = [item]
+            elif current:
+                current.append(item)
+        if current:
+            sections.append(current)
+
+    risk_sections = [section for section in sections
+                     if re.match(r"^Risk\s+R-\d{3}\b", section[0], re.IGNORECASE)]
+    risk_id = re.search(r"\bR-\s*(\d{3})\b", question, re.IGNORECASE)
+    if risk_id and risk_sections:
+        target = next((section for section in risk_sections
+                       if re.search(r"\bR-\s*" + risk_id.group(1) + r"\b", section[0], re.IGNORECASE)), None)
+        if target:
+            return "\n".join(target[:6])
+    if "risk" in terms and risk_sections:
+        return "\n".join("\n".join(section[:6]) for section in risk_sections[:5])
+
+    relevant_sections = []
+    for index, section in enumerate(sections):
+        section_words = {token.casefold() for token in re.findall(
+            r"[\w]+", " ".join(section), flags=re.UNICODE)}
+        matched = terms & section_words
+        if matched:
+            score = len(matched) / max(1, len(terms)) + len(matched) * 0.1
+            relevant_sections.append((score, index, section))
+    if relevant_sections:
+        selected_sections = [section for _, _, section in sorted(
+            relevant_sections, key=lambda item: item[0], reverse=True)[:3]]
+        return "\n".join("\n".join(section[:6]) for section in selected_sections)
+
     candidates = []
     for passage in passages:
         for sentence in re.split(r"(?<=[.!?])\s+|(?<=•)\s*", passage["content"]):
