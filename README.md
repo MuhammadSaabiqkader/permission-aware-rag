@@ -1,3 +1,5 @@
+[Live demo](https://permission-aware-rag.vercel.app/) · [Source repository](https://github.com/MuhammadSaabiqkader/permission-aware-rag)
+
 # Keyline — Permission-Aware Document Intelligence
 
 Keyline is a full-stack document question-answering app built with FastAPI. It lets a team upload PDFs, text, or Markdown, then retrieve answers from the documents a signed-in user is allowed to see. Workspace and role checks run as part of retrieval, before source passages can reach the optional language model.
