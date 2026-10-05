@@ -96,7 +96,7 @@ flowchart LR
     Parse --> Store[(SQLite FTS5 locally<br/>PostgreSQL + pgvector on Vercel)]
     API --> Retrieve[Workspace + role filtered retrieval]
     Store --> Retrieve
-    Retrieve -->|authorized passages only| LLM[Optional OpenAI-compatible model]
+    Retrieve -->|authorized passages only| LLM[Vercel AI Gateway on Vercel<br/>Optional OpenAI-compatible model locally]
     Retrieve --> Cite[Source citations]
     Retrieve --> Audit[Workspace audit history]
 ```
